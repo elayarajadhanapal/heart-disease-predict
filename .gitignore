@@ -1,0 +1,48 @@
+# ==========================================
+# Python & Virtual Environments
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# ==========================================
+# Jupyter Notebooks
+# ==========================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# ==========================================
+# Testing & Code Quality
+# ==========================================
+.pytest_cache/
+.mypy_cache/
+.tox/
+.cache/
+
+# ==========================================
+# MLOps & Experiment Tracking (MLflow)
+# ==========================================
+mlflow.db
+mlruns/
+
+# ==========================================
+# Model Artifacts (Optional)
+# ==========================================
+# Note: Since your GitHub Actions CI/CD pipeline 
+# automatically runs train.py and generates the model, 
+# you can choose to ignore local .pkl files, OR 
+# comment this out if your professor expects the 
+# model .pkl file to be checked into git.
+# models/*.pkl
+
+# ==========================================
+# Operating System Files
+# ==========================================
+.DS_Store
+Thumbs.db
