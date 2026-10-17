@@ -34,7 +34,7 @@ jobs:
 
     - name: Run Unit Tests with Pytest
       run: |
-        pytest -v
+        python -m pytest -v
 
     - name: Execute Automated Data Acquisition & Model Training
       run: |
