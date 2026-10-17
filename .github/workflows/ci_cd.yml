@@ -24,6 +24,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .   # <-- This registers 'src' globally in the Python environment
 
     - name: Lint Code with Flake8
       run: |
@@ -38,8 +39,8 @@ jobs:
 
     - name: Execute Automated Data Acquisition & Model Training
       run: |
-        PYTHONPATH=. python -m src/download_data
-        PYTHONPATH=. python -m src/train
+        python src/download_data.py
+        python src/train.py
 
     - name: Archive MLflow Artifacts & Trained Model
       uses: actions/upload-artifact@v4
