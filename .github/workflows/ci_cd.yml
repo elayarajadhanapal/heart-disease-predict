@@ -38,8 +38,8 @@ jobs:
 
     - name: Execute Automated Data Acquisition & Model Training
       run: |
-        python src/download_data.py
-        python src/train.py
+        python -m src/download_data.py
+        python -m src/train.py
 
     - name: Archive MLflow Artifacts & Trained Model
       uses: actions/upload-artifact@v4
