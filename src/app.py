@@ -1,7 +1,13 @@
 import joblib
 import pandas as pd
+import logging
+import time
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -9,6 +15,40 @@ app = FastAPI(
     description="MLOps Production API using FastAPI and Scikit-Learn",
     version="1.0.0"
 )
+
+# Configure application logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+logger = logging.getLogger("heart-disease-api")
+
+
+# Log every API request and response
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.perf_counter()
+
+        response = await call_next(request)
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        logger.info(
+            "%s %s | status=%s | duration_ms=%.2f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms
+        )
+
+        return response
+
+
+app.add_middleware(RequestLoggingMiddleware)
+
+# Expose Prometheus metrics at /metrics
+Instrumentator().instrument(app).expose(app)
 
 # Load the trained model pipeline on startup
 model_path = "models/heart_disease_pipeline.pkl"
