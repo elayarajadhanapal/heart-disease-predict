@@ -128,6 +128,12 @@ heart-disease-predict/
 │
 ├── screenshots/
 │
+├── notebooks/
+│   ├── eda.ipynb
+│   ├── preprocess.ipynb
+│   ├── train.ipynb
+│   └── tests.ipynb
+│
 ├── src/
 │   ├── app.py
 │   ├── download_data.py
@@ -264,7 +270,9 @@ Five-fold stratified cross-validation is also used during model evaluation.
 
 ## 8. Model Evaluation
 
-The following evaluation metrics are calculated:
+The training pipeline evaluates both Logistic Regression and Random Forest using the test dataset.
+
+The following metrics are calculated:
 
 - Accuracy
 - Precision
@@ -277,19 +285,42 @@ Additional evaluation artifacts include:
 - Confusion matrix
 - ROC curve
 
-The final selected model is saved as:
+The model with the highest **test ROC-AUC** is selected as the champion model. The champion is saved to:
 
 ```text
 models/heart_disease_pipeline.pkl
 ```
 
-The saved artifact contains the preprocessing pipeline together with the trained classifier, allowing the same preprocessing logic to be used during inference.
+Historical candidate models are preserved separately using their model name and MLflow run ID:
 
----
+```text
+models/runs/<model_name>_<run_id>.pkl
+```
+
+Evaluation plots are also stored in unique MLflow-run directories to prevent one training run from overwriting another:
+
+```text
+screenshots/mlflow_runs/<run_id>/
+    ├── cm_<model_name>.png
+    └── roc_<model_name>.png
+```
+
+### Latest demonstrated model results
+
+In the latest demonstrated training run, the evaluation plots showed:
+
+| Model | Test ROC-AUC |
+|---|---:|
+| Logistic Regression | **0.969** |
+| Random Forest | **0.955** |
+
+Based on the test ROC-AUC criterion, Logistic Regression was the champion in that run and was written to `models/heart_disease_pipeline.pkl`.
+
+> The champion file is the model consumed by the FastAPI application. Running training again may change the champion if another model achieves a higher test ROC-AUC.
 
 ## 9. MLflow Experiment Tracking
 
-MLflow is used for experiment tracking.
+MLflow is used as the central experiment-tracking component of the project.
 
 The experiment name is:
 
@@ -297,15 +328,28 @@ The experiment name is:
 Heart_Disease_Classification_MLOps
 ```
 
-The training pipeline records:
+The training notebook is:
 
-- Model parameters
+```text
+train.ipynb
+```
+
+The notebook generates/updates the reusable training implementation in:
+
+```text
+src/train.py
+```
+
+Each model family is tracked as a separate MLflow run. The training pipeline records:
+
+- Hyperparameters
 - Cross-validation metrics
 - Test metrics
-- Model artifacts
+- Model type
+- MLflow run ID
 - Confusion matrix
 - ROC curve
-- Trained model
+- Trained sklearn model
 
 The MLflow tracking URI used by the training pipeline is:
 
@@ -313,13 +357,39 @@ The MLflow tracking URI used by the training pipeline is:
 sqlite:///mlflow.db
 ```
 
-The trained model artifact is also stored under:
+### Preserving artifacts across runs
+
+Training runs no longer rely on a single filename for every generated evaluation artifact. Each run receives its own directory based on the MLflow run ID.
+
+Historical models are also preserved under:
+
+```text
+models/runs/
+```
+
+while the single champion consumed by the application remains:
 
 ```text
 models/heart_disease_pipeline.pkl
 ```
 
----
+This gives the project both **experiment history** and a clear **current serving model**.
+
+### MLflow UI
+
+The MLflow UI can be started locally with:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+Open:
+
+```text
+http://127.0.0.1:5000
+```
+
+The UI provides evidence of the `Heart_Disease_Classification_MLOps` experiment and its Logistic Regression and Random Forest runs.
 
 ## 10. FastAPI Prediction Service
 
@@ -535,6 +605,10 @@ The workflow automatically:
 9. Archives trained model and MLflow artifacts.
 
 This provides automated validation of the machine learning pipeline whenever changes are pushed to GitHub.
+
+The workflow also uploads the generated model, screenshots, and MLflow database as GitHub Actions artifacts for CI evidence and reproducibility.
+
+The GitHub Actions artifact is **not directly consumed by `src/app.py` in the current implementation**. The local/Docker/Kubernetes serving path continues to use the model file at `models/heart_disease_pipeline.pkl`.
 
 ---
 
@@ -988,7 +1062,61 @@ MLflow tracks model parameters, metrics, and artifacts.
 
 Unit tests validate the preprocessing and inference pipeline.
 
-### CI/CD
+### Current Model Serving Behavior
+
+The deployed FastAPI application uses the local champion model at:
+
+```text
+models/heart_disease_pipeline.pkl
+```
+
+The training pipeline evaluates Logistic Regression and Random Forest candidates using cross-validation and held-out test metrics. The model with the best test ROC-AUC is selected as the champion and written to the stable `models/heart_disease_pipeline.pkl` path.
+
+FastAPI loads this file at application startup, so it serves the champion model currently present at that path. MLflow stores the individual experiment runs, parameters, metrics, evaluation plots, and logged models for experiment tracking and historical comparison. FastAPI does not dynamically select a model from the MLflow UI.
+
+The GitHub Actions artifact is currently retained as CI evidence and is not automatically downloaded into `app.py`. The existing Docker/Kubernetes flow therefore continues to package and deploy the model available under `models/heart_disease_pipeline.pkl`.
+
+---
+
+## Artifact Versioning
+
+Training artifacts are preserved by MLflow using individual run IDs. Local evaluation plots generated by the updated training notebook are stored under unique MLflow-run directories to avoid overwriting previous run evidence.
+
+Historical trained model copies are also retained under:
+
+```text
+models/runs/
+```
+
+while:
+
+```text
+models/heart_disease_pipeline.pkl
+```
+
+remains the current champion model consumed by FastAPI.
+
+---
+
+## Latest Implementation Status
+
+The current project status includes:
+
+- MLflow experiment tracking with multiple model runs.
+- Logistic Regression and Random Forest model comparison.
+- Cross-validation and test-set evaluation including ROC-AUC.
+- Unique MLflow-run directories for local evaluation artifacts.
+- Historical model copies under `models/runs/`.
+- Stable champion model path: `models/heart_disease_pipeline.pkl`.
+- FastAPI serving the stable champion model.
+- Docker containerization and Kubernetes deployment with Minikube.
+- API request logging and Prometheus metrics.
+- GitHub Actions CI pipeline for testing, data acquisition, model training, and artifact archiving.
+- GitHub Actions artifacts are retained as CI evidence and are not currently wired directly into `app.py`.
+
+---
+
+## CI/CD
 
 GitHub Actions automatically performs validation, testing, data acquisition, and model training.
 
@@ -1027,7 +1155,69 @@ These screenshots provide supporting evidence for the implemented MLOps workflow
 
 ---
 
-## 30. Conclusion
+## 30. Latest Implementation Updates
+
+The current implementation includes the following updates:
+
+### Training notebook and MLflow
+
+`train.ipynb` now includes the MLflow-enabled training workflow and generates the reusable `src/train.py` implementation. Logistic Regression and Random Forest are trained, evaluated, and tracked as separate MLflow runs.
+
+### Champion model
+
+The champion is selected using the highest test ROC-AUC and saved to:
+
+```text
+models/heart_disease_pipeline.pkl
+```
+
+`src/app.py` loads this file for inference. The application does not query MLflow to choose a model at request time.
+
+### Historical model preservation
+
+Every trained candidate model is preserved using its MLflow run ID:
+
+```text
+models/runs/<model_name>_<run_id>.pkl
+```
+
+This prevents historical models from being overwritten.
+
+### Evaluation artifact preservation
+
+Confusion matrices and ROC curves are stored per MLflow run:
+
+```text
+screenshots/mlflow_runs/<run_id>/
+```
+
+This prevents plots from different training runs from replacing one another.
+
+### Current serving path
+
+The current serving architecture intentionally remains simple:
+
+```text
+train.ipynb / src/train.py
+        ↓
+Champion selection by test ROC-AUC
+        ↓
+models/heart_disease_pipeline.pkl
+        ↓
+src/app.py
+        ↓
+FastAPI
+        ↓
+Docker / Kubernetes
+```
+
+GitHub Actions independently executes data acquisition and model training and stores the resulting model as a workflow artifact. That artifact is currently kept as CI evidence and is not automatically downloaded by the FastAPI application.
+
+### Monitoring
+
+The FastAPI service exposes Prometheus metrics through `/metrics`. Prometheus scrapes the service and Grafana provides visualization. API request logging records method, path, status code, and request duration.
+
+## 31. Conclusion
 
 This project demonstrates an end-to-end MLOps workflow for a machine learning classification problem.
 
