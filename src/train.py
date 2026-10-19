@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 import joblib
 import pandas as pd
 import numpy as np
@@ -23,28 +25,29 @@ from sklearn.metrics import (
     roc_curve,
     confusion_matrix,
 )
+
 import mlflow
 import mlflow.sklearn
+
 from src.preprocess import build_preprocessor, ALL_FEATURES, TARGET_COL
 
 
-def plot_and_save_artifacts(y_true, y_pred, y_prob, model_name, output_dir="screenshots"):
-    """Generates and saves Confusion Matrix and ROC Curve plots for MLflow logging."""
-    os.makedirs(output_dir, exist_ok=True)
+def plot_and_save_artifacts(y_true, y_pred, y_prob, model_name, run_id, output_dir="screenshots"):
+    """Generate evaluation plots in a unique MLflow-run directory."""
+    run_dir = Path(output_dir) / "mlflow_runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Confusion Matrix
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(5, 4))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
     plt.title(f"Confusion Matrix - {model_name}", fontweight="bold")
     plt.xlabel("Predicted Label")
     plt.ylabel("True Label")
-    cm_path = os.path.join(output_dir, f"cm_{model_name.lower()}.png")
+    cm_path = run_dir / f"cm_{model_name.lower()}.png"
     plt.tight_layout()
     plt.savefig(cm_path, dpi=300)
     plt.close()
 
-    # 2. ROC Curve
     fpr, tpr, _ = roc_curve(y_true, y_prob)
     auc_val = roc_auc_score(y_true, y_prob)
     plt.figure(figsize=(6, 4))
@@ -54,16 +57,17 @@ def plot_and_save_artifacts(y_true, y_pred, y_prob, model_name, output_dir="scre
     plt.ylabel("True Positive Rate (Recall)")
     plt.title(f"ROC Curve - {model_name}", fontweight="bold")
     plt.legend(loc="lower right")
-    roc_path = os.path.join(output_dir, f"roc_{model_name.lower()}.png")
+    roc_path = run_dir / f"roc_{model_name.lower()}.png"
     plt.tight_layout()
     plt.savefig(roc_path, dpi=300)
     plt.close()
 
-    return cm_path, roc_path
+    return str(cm_path), str(roc_path)
 
 
 def train_and_evaluate(data_path="data/processed/heart_disease_cleaned.csv", model_dir="models"):
-    os.makedirs(model_dir, exist_ok=True)
+    """Train candidate models, track them in MLflow, and save the champion."""
+    Path(model_dir).mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(data_path)
     X = df[ALL_FEATURES]
     y = df[TARGET_COL]
@@ -106,26 +110,19 @@ def train_and_evaluate(data_path="data/processed/heart_disease_cleaned.csv", mod
         ])
 
         grid_search = GridSearchCV(
-            estimator=pipeline,
-            param_grid=config["param_grid"],
-            cv=cv_strategy,
-            scoring="roc_auc",
-            n_jobs=-1,
-            refit=True,
+            estimator=pipeline, param_grid=config["param_grid"],
+            cv=cv_strategy, scoring="roc_auc", n_jobs=-1, refit=True
         )
 
-        with mlflow.start_run(run_name=model_name):
+        with mlflow.start_run(run_name=model_name) as run:
+            run_id = run.info.run_id
             grid_search.fit(X_train, y_train)
             best_pipeline = grid_search.best_estimator_
 
             cv_scores = cross_validate(
-                best_pipeline,
-                X_train,
-                y_train,
-                cv=cv_strategy,
-                scoring=["accuracy", "precision", "recall", "roc_auc"],
+                best_pipeline, X_train, y_train, cv=cv_strategy,
+                scoring=["accuracy", "precision", "recall", "roc_auc"]
             )
-
             y_pred = best_pipeline.predict(X_test)
             y_prob = best_pipeline.predict_proba(X_test)[:, 1]
             roc_score = float(roc_auc_score(y_test, y_prob))
@@ -145,26 +142,35 @@ def train_and_evaluate(data_path="data/processed/heart_disease_cleaned.csv", mod
             mlflow.log_params(grid_search.best_params_)
             mlflow.log_param("cv_folds", 5)
             mlflow.log_param("model_type", model_name)
+            mlflow.set_tag("run_id", run_id)
             mlflow.log_metrics(metrics)
 
-            cm_path, roc_path = plot_and_save_artifacts(y_test, y_pred, y_prob, model_name)
+            cm_path, roc_path = plot_and_save_artifacts(
+                y_test, y_pred, y_prob, model_name, run_id
+            )
             mlflow.log_artifact(cm_path, artifact_path="evaluation_plots")
             mlflow.log_artifact(roc_path, artifact_path="evaluation_plots")
 
             mlflow.sklearn.log_model(
-                sk_model=best_pipeline,
-                artifact_path="model",
-                input_example=X_train.iloc[:2],
+                sk_model=best_pipeline, artifact_path="model", input_example=X_train.iloc[:2]
             )
 
-            results_summary.append({"model": model_name, **metrics})
+            historical_dir = Path(model_dir) / "runs"
+            historical_dir.mkdir(parents=True, exist_ok=True)
+            historical_model_path = historical_dir / f"{model_name}_{run_id}.pkl"
+            joblib.dump(best_pipeline, historical_model_path)
+
+            results_summary.append({"model": model_name, "run_id": run_id, **metrics})
+            print(f"[{model_name}] Run ID: {run_id}")
+            print(f"[{model_name}] Test ROC-AUC: {metrics['test_roc_auc']:.4f}")
+            print(f"[{model_name}] Historical model: {historical_model_path}")
 
             if roc_score > best_overall_auc:
                 best_overall_auc = roc_score
                 best_overall_pipeline = best_pipeline
                 best_model_name = model_name
 
-    final_model_path = os.path.join(model_dir, "heart_disease_pipeline.pkl")
+    final_model_path = Path(model_dir) / "heart_disease_pipeline.pkl"
     joblib.dump(best_overall_pipeline, final_model_path)
     print(f"Champion Model: {best_model_name} (Test ROC-AUC: {best_overall_auc:.4f}) -> Saved to {final_model_path}")
     return pd.DataFrame(results_summary)
